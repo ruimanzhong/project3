@@ -7,7 +7,7 @@
 #' @ nt number of time points
 rm(list = ls())
 
-packages = c("wavethresh", "gridExtra","tidyverse","RColorBrewer",'INLA', "deldir", "fields", "igraph","ggraph", "RANN" , "grid", "parallel", "class", "sf", "ggplot2")
+packages = c("wavethresh", "gridExtra","tidyverse","RColorBrewer",'INLA', "deldir", "fields", "igraph","ggraph", "RANN" , "grid", "parallel", "class", "sf", "ggplot2", 'fda')
 ## Now load or install&load all packages
 package.check <- lapply( packages,
                          FUN = function(x) {
@@ -32,7 +32,8 @@ library(readxl)
 brazil_2021 <- read_excel("data/brazil_2021.xls")
 # partition and true label---------------------------------------------------------------
 ns = nrow(coords)
-cluster_true = rep(0, n)
+nt = 256
+cluster_true = rep(0, ns)
 bbox <- st_bbox(boundary)
 center <- c( -45,-19)
 idx1 = ((coords[, 1] - center[1])^2 + (coords[, 2] - center[2])^2 >= 3.5^2) & (coords[, 1] - center[1] >= 0) & (coords[, 2] - center[2] >= 0)
@@ -58,7 +59,7 @@ t = seq(0,1, length.out = nt)
 
 J = 8
 splinebasis = NULL
-sigma2_y <- seq(0.01,0.04, length.out = k_true)
+sigma2_y <- rep(0.01, k_true)
 # splinebasis = create.polygonal.basis(seq(0,1,0.1))
  splinebasis = create.bspline.basis(c(0,1), J)
 tPHI= eval.basis(t, splinebasis) 
@@ -70,8 +71,6 @@ shape = seq(1,3, length.out = k_true)
 lambda <- matrix(0, k_true, J+1)
 beta_random <- matrix(1, k_true, J+1)
 eta_true <- matrix(1, k_true, J+1)
-
-exp(sapply(mean_vec, function(mean) sum(colMeans(tPHI) * mean)))
 
 set.seed(12345)
 for (i in 1:k_true){
@@ -127,7 +126,7 @@ Y_obs = matrix(Y, nrow = ns, ncol = nt)
 
 raw_data = cbind(coords, cluster_true,population,Y_obs)
 
-save(raw_data,file = 'data/raw_data.Rdata')
+save(raw_data,file = 'data/raw_data_eqvar.Rdata')
 
 ggplot(data = boundary) +
   geom_sf()

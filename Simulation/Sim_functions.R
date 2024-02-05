@@ -34,12 +34,11 @@ Para_re2all <- function(x, J){
 
 #########  Return both likelihood and local likelihood vector
 
-evalLogLike_all_parallel2 <- function(Y, X, lambda, sigmasq_y, ind_gam, membership, cl) {
+evalLogLike_all_parallel2 <- function(Y, X, lambda, sigmasq_y, population, membership, cl,a0 = NULL, b0 = NULL) {
   
   p=max(membership)
   
-  llik_res=parLapply(cl, 1:p, evalLogLike_each, Y, X, lambda, sigmasq_y,
-                     ind_gam, membership)
+  llik_res=parLapply(cl, 1:p, evalLogLike_each_INLA, Y, X, lambda, sigmasq_y, population, membership, a0, b0)
   log_like_vec=unlist(llik_res)
   llik_all=sum(log_like_vec)
   
@@ -50,14 +49,14 @@ evalLogLike_all_parallel2 <- function(Y, X, lambda, sigmasq_y, ind_gam, membersh
 
 #######  Functions for updating local likelihood vector
 
-evalLogLike.ratio=function(move,log_like_vec, control.move, Y, X, lambda, sigmasq_y, ind_gam, membership){
+evalLogLike.ratio=function(move,log_like_vec, control.move, Y, X, lambda, sigmasq_y, membership,a0 = NULL, b0 = NULL){
   
   
   ### update local likelihoods for split move
   if(move=='split'){ 
     log_like_vec_new=log_like_vec;
-    M1 <- evalLogLike_each (control.move$clust_old, Y, X,lambda, sigmasq_y, ind_gam, membership)  ## new clust 1 
-    M2 <- evalLogLike_each (control.move$k, Y, X, lambda, sigmasq_y, ind_gam, membership)  ## new clust 2
+    M1 <- evalLogLike_each_INLA (control.move$clust_old, Y, X, lambda, sigmasq_y, population, membership, a0, b0)  ## new clust 1 
+    M2 <- evalLogLike_each_INLA (control.move$k,  Y, X, lambda, sigmasq_y, population, membership, a0, b0)  ## new clust 2
     log_like_vec_new[control.move$clust_old]=M1
     log_like_vec_new[control.move$k]=M2
     llratio=M1+M2-log_like_vec[control.move$clust_old]
@@ -65,7 +64,7 @@ evalLogLike.ratio=function(move,log_like_vec, control.move, Y, X, lambda, sigmas
   
   ### update local likelihoods for merge move
   if(move=='merge'){  
-    M1 <- evalLogLike_each (control.move$cluster_newid, Y, X, lambda, sigmasq_y, ind_gam, membership)
+    M1 <- evalLogLike_each_INLA (control.move$cluster_newid, Y, X, lambda, sigmasq_y, population, membership)
     log_like_vec_new=log_like_vec[-control.move$cluster_rm]
     log_like_vec_new[control.move$cluster_newid]=M1
     llratio= M1-sum(log_like_vec[c(control.move$cluster_rm,control.move$cluster_comb)])
@@ -85,13 +84,15 @@ evalLogLike.ratio=function(move,log_like_vec, control.move, Y, X, lambda, sigmas
 ######ind_gam: the m by one vector of indicator variables;
 ######membership: the n b one vector of cluster memberships
 
-evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, membership) {
+evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, membership, a0 = NULL, b0 = NULL) {
   
-  # nt=base::nrow(X); J = ncol(X) ; p=max(membership)
+   nt=base::nrow(X); J = ncol(X) ; 
+  p=max(membership)
   
   ind=which(membership==k); ns=length(ind); n=ns*nt
   
-  Yk=Y[ind,]
+  Yk= matrix(Y[ind,],ncol = nt)
+  vec_Yk = as.integer(as.vector(t(Yk))) 
   
   sigma2_yk=sigmasq_y[k]
   
@@ -105,43 +106,28 @@ evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, member
     # ind_gam_k=ind_gam
     
   }
-  
-  # A <-  cbind(diag(1, n), rep(1, n)) 
-  # vec_lambda=Para_re2all(lambda_k, J)
-  # 
-  # # ind_sel=which(ind_gam_k!=0)
-  # X_sel=X                                
-  # V=vec_lambda # ind_gam * lambda
-  # log_prec_theta = log(1/(V * sigma2_yk))
-  # Q =  as(diag(1/(V * sigma2_yk)), "sparseMatrix")
-  # beta_prior = list(Q , b = rep(0, nt))
-
-  
-  # compute log prior distribution of beta N(0, sigma^2 * V)
-  
-  # log_posterior_G = def.xcond(log_prec_theta, Yk, A, beta)
-  # beta_mode_vec = log_posterior_G[3]
-  # eta  = X_sel %*% t(as.matrix(beta_mode_vec))
-  # log_prior_beta = -0.5*crossprod(beta_mode_vec, Q) %*% beta_mode_vec
-  # 
-  # log_like_D = eta %*% as.matrix(apply(Yk, 2, sum)) - exp(eta)
-  # 
-  # log_like = log_like_D + log_prior_beta - log_posterior_G
-  # return(as.numeric(log_like))
-  
-  nt=base::nrow(X);
-  
-  ind=which(membership==k); ns=length(ind); n=ns*nt
-  Yk=as.integer(Y[ind,]* population[ind])
-  X = cbind(1, tPHI)
+  COV = cbind(1, do.call(rbind, replicate(nrow(Yk), X, simplify = FALSE)))
   beta.prec = diag(lambda_k)*(1/sigma2_yk)
-  data = as.data.frame(cbind(Yk,t))
-  m.bs3 <- inla(Yk ~ X, family = "poisson", E = population[ind],
-                data = data, control.predictor = list(compute = TRUE), 
-                control.fixed = list(prec = beta.prec)
-  )
+  data = as.data.frame(cbind(vec_Yk = vec_Yk,COV = COV))
   
-  return(m.bs3[["mlik"]][[1]] + 0.5 * log(det(diag(lambda_k))) )
+  idx = rep(1,length(vec_Yk))
+  if (!is.null(a0) & !is.null(b0)){
+    formula= vec_Yk~  COV + f(idx, model = 'iid',
+                            hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
+    m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
+                        data = data, 
+                        control.fixed = list(prec = beta.prec)
+    )
+    sigma_sq_new <- inla.hyperpar.sample(m.bs3)
+    return(list(m.bs3[["mlik"]][[1]] + 0.5 * log(det(diag(lambda_k))), sigmasq_new ))
+  } else {
+    formula= vec_Yk~  COV
+    m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
+                        data = data, 
+                        control.fixed = list(prec = beta.prec)
+    )
+    return(m.bs3[["mlik"]][[1]] + 0.5 * log(det(diag(lambda_k))) )
+  }
 }
 
 # ################################################################################
@@ -151,48 +137,62 @@ evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, member
 ###Function to get the posterior samples of the wavelet coefficients vector, beta
 
 #### For k-th cluster
-postBeta_each<-function(k, Y, X, lambda, sigmasq_y, ind_gam, membership){
+postBeta_each<-function(k, Y, X, lambda, sigmasq_y,population,membership, a0 = NULL, b0 = NULL){
   
-  nt=base::nrow(X); J=log2(nt); p=max(membership)
-  temp_ind=which(membership==k); ns=length(temp_ind); n=ns*nt;
+  nt=base::nrow(X); J = ncol(X) ; 
+  p=max(membership)
+  
+  ind=which(membership==k); ns=length(ind); n=ns*nt
+  
+  Yk= matrix(Y[ind,],ncol = nt)
+  vec_Yk = as.integer(as.vector(t(Yk))) 
+  
+  sigma2_yk=sigmasq_y[k]
   
   if(p>1){
     
-    lambda_k=lambda[k,]; ind_gam_k=ind_gam[k,];
-    
+    lambda_k=lambda[k,]
+    # ind_gam_k=ind_gam[k,]
   }else{
     
-    lambda_k=lambda; ind_gam_k=ind_gam
+    lambda_k=lambda
+    # ind_gam_k=ind_gam
+    
   }
+  X = cbind(1, do.call(rbind, replicate(nrow(Yk), X, simplify = FALSE)))
+  beta.prec = diag(lambda_k)*(1/sigma2_yk)
+  data = as.data.frame(cbind(vec_Yk = vec_Yk,X = X))
   
-  # Y_clust=matrix(t(Y[temp_ind,]), n, 1)  
-  vec_lambda_k=Para_re2all(lambda_k, J)
-  
-  ind_sel=which(ind_gam_k!=0)
-  r=length(ind_sel)
-  X_sel=X[,ind_sel]
-  V=vec_lambda_k[ind_sel]
-  temp_prec=as.matrix(ns+1/V)
-  
-  # BY=t(kronecker(as.matrix(rep(1, ns)), X_sel))%*%Y_clust
-  Y_clust=Y[temp_ind,]
-  BY=as.matrix(apply(t(Y_clust%*%X_sel), 1, sum))
-  
-  mu_beta=1/temp_prec*BY
-  
-  beta_new=matrix(0, nt, 1)
-  beta_new[ind_sel]=mu_beta+sqrt(sigmasq_y[k])*(1/sqrt(temp_prec)*as.matrix(rnorm(r)))
+  idx = rep(1,length(vec_Yk))
+  if (!is.null(a0) & !is.null(b0)){
+    formula= vec_Yk~  X + f(idx, model = 'iid',
+                            hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
+    m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
+                        data = data, 
+                        control.fixed = list(prec = beta.prec)
+    )
+    sigma_sq_new <- inla.hyperpar.sample(m.bs3)
+  } else {
+    formula= vec_Yk~  X
+    m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
+                        data = data, control.compute=list(config = TRUE),
+                        control.fixed = list(prec = beta.prec)
+    )
+  }
+ sample = INLA::inla.posterior.sample.eval(c("Intercept","bspl4.1","bspl4.2","bspl4.3","bspl4.4","bspl4.5"    
+                               ,"bspl4.6","bspl4.7","bspl4.8"), INLA::inla.posterior.sample(1, m.bs3))
+  beta_new = matrix(sample, J+1, 1)
   
   return(as.numeric(beta_new))
   
 }
 
 #####For all clusters
-postBeta_par<-function(Y, X, lambda, sigmasq_y, ind_gam, membership, cl){
+postBeta_par<-function(Y, X, lambda, sigmasq_y, membership, cl, a0 = NULL, b0 = NULL){
   
   
   p=max(membership) 
-  beta_all=parLapply(cl, 1:p, postBeta_each, Y, X, lambda, sigmasq_y, ind_gam, membership)
+  beta_all=parLapply(cl, 1:p, postBeta_each, Y, X, lambda, sigmasq_y,population,membership, a0, b0)
   
   return(unlist(beta_all))
   
@@ -203,32 +203,10 @@ postBeta_par<-function(Y, X, lambda, sigmasq_y, ind_gam, membership, cl){
 ################################################################################
 ###Function to propose a new sigma2
 
-postSigmasq<-function(Y, X, lambda, ind_gam, a0, b0){
-  
-  n = length(Y); nt=dim(X)[1]
-  ns=n/nt
-  ind_sel=which(ind_gam!=0)
-  X_sel=X[,ind_sel]
-  V=lambda[ind_sel]
-  temp_cov=as.matrix(ns+1/V)
-  
-  # BY=t(kronecker(as.matrix(rep(1, ns)), X_sel))%*%Y
-  BY=as.matrix(apply(t(Y%*%X_sel), 1, sum))
-  
-  invQy=1/sqrt(temp_cov)*BY
-  
-  CVAC=sum(Y^2)-sum(invQy^2)
-  
-  sigmasq.new=1/rgamma(1, shape=(a0+n)/2, rate=(b0+CVAC)/2)
-  
-  return(as.numeric(sigmasq.new))
-  
-}
-
 
 ###For k-th cluster
 
-postSigmasq_each<-function(k, Y, X, lambda, ind_gam, a0, b0, membership){
+postSigmasq_each<-function(k, Y, X, lambda,  a0, b0, membership){
   
   temp_ind=which(membership==k); ns=length(temp_ind); p=max(membership)
   nt=base::nrow(X); J=log2(nt); n=ns*nt
@@ -266,7 +244,7 @@ postSigmasq_each<-function(k, Y, X, lambda, ind_gam, a0, b0, membership){
 
 ######For all clusters
 
-postSigmasq_par<-function(Y, X, lambda, ind_gam, a0, b0, membership, cl){
+postSigmasq_par<-function(Y, X, lambda, a0, b0, membership, cl){
   
   p=max(membership)  
   sigmasq_all=parLapply(cl, 1:p, postSigmasq_each, Y, X, lambda, ind_gam, a0, b0, membership)
@@ -280,15 +258,17 @@ postSigmasq_par<-function(Y, X, lambda, ind_gam, a0, b0, membership, cl){
 
 ##propose a single lambda for a cluster
 
-postLambda_each<- function(k, p, nt, J, beta, sigmasq_y, ind_gam, c0, d0, membership){
+postLambda_each<- function(k, p, nt, J, beta, sigmasq_y, c0, d0, membership){
   
   if(p>1){
     
-    beta_k=beta[k,]; ind_gam_k=ind_gam[k,]
+    beta_k=beta[k,]; 
+    # ind_gam_k=ind_gam[k,]
     
   }else{
     
-    beta_k=beta; ind_gam_k=ind_gam
+    beta_k=beta; 
+    # ind_gam_k=ind_gam
     
   }
   
@@ -319,11 +299,11 @@ postLambda_each<- function(k, p, nt, J, beta, sigmasq_y, ind_gam, c0, d0, member
 }
 
 ####For all clusters
-postLambda_par<- function(beta, sigmasq_y, ind_gam, c0, d0, membership, cl){
+postLambda_par<- function(beta, sigmasq_y, c0, d0, membership, cl){
   
   p=max(membership); nt=base::ncol(beta); J=log2(nt)   
   
-  lambda_all=parLapply(cl, 1:p, postLambda_each, p, nt, J, beta, sigmasq_y, ind_gam, c0, d0, membership)
+  lambda_all=parLapply(cl, 1:p, postLambda_each, p, nt, J, beta, sigmasq_y, c0, d0, membership)
   
   return(as.numeric(unlist(lambda_all)))
   
@@ -545,10 +525,11 @@ GenerateClust_unbalanced=function(coord,clustsize,seed=seed){
 }
 
 # function to get whether an edge is within a cluster or bewteen two clusters
-getEdgeStatus <- function(membership, inc_mat) {
+getEdgeStatus <- function(membership, graph) {
+  inc_mat = get.edgelist(graph, names = F)
   membership_head = membership[inc_mat[, 1]]
   membership_tail = membership[inc_mat[, 2]]
-  edge_status = rep('w', length(inc_mat))
+  edge_status = rep('w', ecount(graph))
   edge_status[membership_head != membership_tail] = 'b'
   return(edge_status)
 }
@@ -562,7 +543,7 @@ splitCluster <- function(mstgraph,k,membership) {
   clust.split=sample.int(k,1,prob=tcluster-1,replace=TRUE)
   edge_cutted=sample.int(tcluster[clust.split]-1,1)
   
-  mst_subgraph=induced_subgraph(mstgraph, membership==clust.split)
+  mst_subgraph=igraph::induced_subgraph(mstgraph, membership==clust.split)
   mst_subgraph=delete.edges(mst_subgraph, edge_cutted)
   connect_comp=components(mst_subgraph) 
   cluster_new = connect_comp$membership
@@ -879,7 +860,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
   
   
   ### initialize log likelihood vector
-  log_like_ini = evalLogLike_all_parallel2(Y, X, lambda, sigmasq_y,  cluster, cl)
+  log_like_ini = evalLogLike_all_parallel2(Y, X = tPHI, lambda, sigmasq_y, population, cluster, cl)
   log_like = log_like_ini$llik_all;log_like_vec=log_like_ini$log_like_vec
   
   
@@ -923,44 +904,26 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       if(k>1){
         
         lambda_new = rbind(lambda, lambda[split_res$clust_old,])
-        ind_gam_new=rbind(ind_gam, ind_gam[split_res$clust_old,])
         
       }else{
         
         lambda_new = rbind(lambda, lambda)
-        ind_gam_new=rbind(ind_gam, ind_gam)
-        
-        
       }
       
       ind_k=which(membership_new==k+1); ns1=length(ind_k)
       Y_clust=Y[ind_k,] 
-      vec_lambda_k=Para_re2all(lambda_new[k+1,], J)
-      sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k, ind_gam_new[k+1,], a0, b0)
-      sigmasq_y_new = c(sigmasq_y, sigmasq_yk)
-      
-      # Obtain the log prior for ind_gam
-      
-      log_prior_gam=0; curr=2
+      # vec_lambda_k=Para_re2all(lambda_new[k+1,], J) for ind_gamma
+       sigmasq_yk= 0.01
+       sigmasq_y_new = c(sigmasq_y, sigmasq_yk)
       
       
-      for(j in 1:J){
-        
-        ind_sel=curr:(curr+2^{J-j}-1)
-        
-        temp_gam=sum(ind_gam_new[k+1, ind_sel])
-        log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
-        
-        curr=curr+2^{J-j}
-      }
+      
       
       # compute log-prior ratio
-      log_A = log(1-c) + (a0/2)*log(b0/2) - log(gamma(a0/2)) -(a0/2+1)*log(sigmasq_yk) - b0/(2*sigmasq_yk) +
-        sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda_new[k+1,])-d0/(2*lambda_new[k+1,])) + log_prior_gam
-      
+      log_A = log(1-c)
       ## calculate loglikelihood ratio by only comparing local likelihood of the two clusters that changed.
       
-      log_L_new=evalLogLike.ratio('split',log_like_vec, split_res, Y, X, lambda_new, sigmasq_y_new, ind_gam_new, membership_new)
+      log_L_new=evalLogLike.ratio('split',log_like_vec, split_res, Y, tPHI, lambda_new, sigmasq_y_new, membership_new)
       log_L=log_L_new$ratio 
       
       #acceptance probability
@@ -976,7 +939,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
         
         lambda = lambda_new; 
         sigmasq_y = sigmasq_y_new; 
-        ind_gam=ind_gam_new
+        # ind_gam=ind_gam_new
         edge_status = getEdgeStatus(cluster, mstgraph)
         birth_cnt=birth_cnt+1
         
@@ -999,7 +962,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       
       log_P = log(rb_new) - log(rd) 
       
-      sigmasq_y_new=sigmasq_y[-cid_rm]; lambda_new = lambda[-cid_rm,]; ind_gam_new=ind_gam[-cid_rm,]
+      sigmasq_y_new=sigmasq_y[-cid_rm]; lambda_new = lambda[-cid_rm,];
       
       
       ##For hetero variances
@@ -1009,33 +972,33 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       
       ind_k=which(membership_new == cid_newid); ns1=length(ind_k)
       Y_clust=Y[ind_k,]
-      vec_lambda_k=Para_re2all(lambda[cid_comb,], J)
+      # vec_lambda_k=Para_re2all(lambda[cid_comb,], J)
       
-      sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k, ind_gam[cid_comb,], a0, b0)
+      # sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k,  a0, b0)
+      sigmasq_yk = 0.01
       sigmasq_y_new[cid_newid]=sigmasq_yk; 
       
       # Obtain the log prior for ind_gam
-      log_prior_gam=0; curr=2
-      
-      for(j in 1:J){
-        
-        ind_sel=curr:(curr+2^{J-j}-1)
-        
-        temp_gam=sum(ind_gam[cid_rm, ind_sel])
-        log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
-        
-        curr=curr+2^{J-j}
-        
-      }
+      # log_prior_gam=0; curr=2
+      # 
+      # for(j in 1:J){
+      #   
+      #   ind_sel=curr:(curr+2^{J-j}-1)
+      #   
+      #   temp_gam=sum(ind_gam[cid_rm, ind_sel])
+      #   log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
+      #   
+      #   curr=curr+2^{J-j}
+      #   
+      # }
       
       # compute log-prior ratio
       
-      log_A = -log(1-c) - (a0/2)*log(b0/2) + log(gamma(a0/2)) + (a0/2+1)*log(sigmasq_y[cid_rm]) + b0/(2*sigmasq_y[cid_rm]) -
-        sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda[cid_rm,])-d0/(2*lambda[cid_rm,])) - log_prior_gam
+      log_A = -log(1-c)
       
       # compute log-likelihood ratio
       
-      log_L_new=evalLogLike.ratio('merge',log_like_vec, merge_res, Y, X, lambda_new, sigmasq_y_new, ind_gam_new, membership_new)
+      log_L_new=evalLogLike.ratio('merge',log_like_vec, merge_res, Y, tPHI, lambda_new, sigmasq_y_new, membership_new)
       log_L=log_L_new$ratio 
       
       
@@ -1052,7 +1015,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
         log_like = sum(log_like_vec);
         
         lambda = lambda_new; sigmasq_y = sigmasq_y_new; 
-        ind_gam=ind_gam_new;
+        # ind_gam=ind_gam_new;
         
         edge_status = getEdgeStatus(cluster, mstgraph)
         
@@ -1070,7 +1033,8 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       membership_new = merge_res$cluster
       
       
-      sigmasq_y_new=sigmasq_y[-cid_rm]; lambda_new = lambda[-cid_rm,]; ind_gam_new=ind_gam[-cid_rm,]
+      sigmasq_y_new=sigmasq_y[-cid_rm]; lambda_new = lambda[-cid_rm,]; 
+      # ind_gam_new=ind_gam[-cid_rm,]
       
       ##For hetero variances
       
@@ -1080,31 +1044,32 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       ind_k=which(membership_new == cid_newid); ns1=length(ind_k)
       
       Y_clust=Y[ind_k,]
-      vec_lambda_k=Para_re2all(lambda[cid_comb,], J)
-      sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k, ind_gam[cid_comb,], a0, b0)
+      # vec_lambda_k=Para_re2all(lambda[cid_comb,], J)
+      # sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k, ind_gam[cid_comb,], a0, b0)
+      sigmasq_yk = 0.01
       sigmasq_y_new[cid_newid]=sigmasq_yk; 
       
       # Obtain the log prior for ind_gam
-      log_prior_gam=0; curr=2
+      # log_prior_gam=0; curr=2
+      # 
+      # for(j in 1:J){
+      #   
+      #   ind_sel=curr:(curr+2^{J-j}-1)
+      #   
+      #   temp_gam=sum(ind_gam[cid_rm, ind_sel])
+      #   log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
+      #   
+      #   curr=curr+2^{J-j}
+      #   
+      # }
       
-      for(j in 1:J){
-        
-        ind_sel=curr:(curr+2^{J-j}-1)
-        
-        temp_gam=sum(ind_gam[cid_rm, ind_sel])
-        log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
-        
-        curr=curr+2^{J-j}
-        
-      }
-      
-      log_prior_merge=- (a0/2)*log(b0/2) + log(gamma(a0/2)) + (a0/2+1)*log(sigmasq_y[cid_rm]) +  b0/(2*sigmasq_y[cid_rm]) - 
-        sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda[cid_rm,])-d0/(2*lambda[cid_rm,])) - log_prior_gam
-      
+      # log_prior_merge=- (a0/2)*log(b0/2) + log(gamma(a0/2)) + (a0/2+1)*log(sigmasq_y[cid_rm]) +  b0/(2*sigmasq_y[cid_rm]) - 
+      #   sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda[cid_rm,])-d0/(2*lambda[cid_rm,])) - log_prior_gam
+      log_prior_merge = 0
       
       k = k-1
       
-      log_L_new_merge=evalLogLike.ratio('merge',log_like_vec, merge_res, Y, X, lambda_new, sigmasq_y_new, ind_gam_new, membership_new)
+      log_L_new_merge=evalLogLike.ratio('merge',log_like_vec, merge_res, Y, tPHI, lambda_new, sigmasq_y_new, membership_new)
       
       # then perform birth move
       split_res = splitCluster(mstgraph, k, merge_res$cluster);
@@ -1115,43 +1080,42 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       
       if(k>2){
         lambda_new = rbind(lambda_new, lambda_new[split_res$clust_old,])
-        ind_gam_new = rbind(ind_gam_new, ind_gam_new[split_res$clust_old,])
+        # ind_gam_new = rbind(ind_gam_new, ind_gam_new[split_res$clust_old,])
         
       }else{
         
         lambda_new = rbind(lambda_new, lambda_new)
-        ind_gam_new = rbind(ind_gam_new, ind_gam_new)
+        # ind_gam_new = rbind(ind_gam_new, ind_gam_new)
         
         
       }
       # For hetero variances
       ind_k=which(membership_new==k); ns1=length(ind_k)
       Y_clust=Y[ind_k,]
-      vec_lambda_k=Para_re2all(lambda_new[k,], J)
-      sigmasq_yk=postSigmasq(Y_clust, X, vec_lambda_k, ind_gam_new[k,], a0, b0)
+      # vec_lambda_k=Para_re2all(lambda_new[k,], J)
+      sigmasq_yk= 0.01
       sigmasq_y_new = c(sigmasq_y_new, sigmasq_yk)
       
       
       # Obtain the log prior for ind_gam
-      log_prior_gam=0; curr=2
+      # log_prior_gam=0; curr=2
+      # 
+      # for(j in 1:J){
+      #   
+      #   ind_sel=curr:(curr+2^{J-j}-1)
+      #   
+      #   temp_gam=sum(ind_gam_new[k, ind_sel])
+      #   log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
+      #   
+      #   curr=curr+2^{J-j}
+      # }
       
-      for(j in 1:J){
-        
-        ind_sel=curr:(curr+2^{J-j}-1)
-        
-        temp_gam=sum(ind_gam_new[k, ind_sel])
-        log_prior_gam=log_prior_gam + log(gamma(temp_gam+1)) + log(gamma(2^{J-j}+1-temp_gam)) - log(gamma(2^{J-j}+2))
-        
-        curr=curr+2^{J-j}
-      }
-      
-      log_prior_split=(a0/2)*log(b0/2) - log(gamma(a0/2)) -(a0/2+1)*log(sigmasq_yk) - b0/(2*sigmasq_yk) + 
-        sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda_new[k,])-d0/(2*lambda_new[k,])) + log_prior_gam
+      log_prior_split=0
       
       
       # compute log-likelihood ratio
       
-      log_L_new=evalLogLike.ratio('split',log_L_new_merge$log_like_vec, split_res, Y, X, lambda_new, sigmasq_y_new, ind_gam_new, membership_new)
+      log_L_new=evalLogLike.ratio('split',log_L_new_merge$log_like_vec, split_res, Y, tPHI, lambda_new, sigmasq_y_new, membership_new)
       log_L = log_L_new$ratio + log_L_new_merge$ratio + log_prior_merge + log_prior_split
       
       
@@ -1168,7 +1132,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
         log_like = sum(log_like_vec);
         
         lambda = lambda_new; sigmasq_y = sigmasq_y_new; 
-        ind_gam=ind_gam_new
+        # ind_gam=ind_gam_new
         
         edge_status = getEdgeStatus(cluster, mstgraph)
         
@@ -1197,65 +1161,55 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       # update lambda
       
       #####parallel implementation
-      
-      lambda.res=postLambda_par(beta, sigmasq_y, ind_gam, c0, d0, cluster, cl)
+      lambda.res = matrix(1, J+1, 1)
+      # lambda.res=postLambda_par(beta, sigmasq_y, c0, d0, cluster, cl)
       
       lambda=t(matrix(lambda.res, (J+1), k))
       
       #######################################################################################      
       ##update ind_gam
-      ind_gam_new=ind_gam
+      # ind_gam_new=ind_gam
       
-      for(i in 1:k){
-        
-        temp_ind=which(cluster==i); ns1=length(temp_ind)
-        
-        if(k>1){
-          
-          lambda_k=lambda[i,]; ind_gam_k=ind_gam[i,];
-          
-        }else{
-          
-          lambda_k=lambda; ind_gam_k=ind_gam;
-          
-        }
-        
-        Y_clust=matrix(t(Y[temp_ind,]), ns1*nt, 1)
-        vec_lam_k=Para_re2all(lambda_k, J);
-        
-        res_gam=postGamma_loop(Y_clust, X, vec_lam_k, ind_gam_k, a0, b0)
-        
-        if(k>1){
-          ind_gam_new[i,]=unlist(res_gam)
-        }else{
-          
-          ind_gam_new=unlist(res_gam)
-          
-        }
-        
-      }
+      # for(i in 1:k){
+      #   
+      #   temp_ind=which(cluster==i); ns1=length(temp_ind)
+      #   
+      #   if(k>1){
+      #     
+      #     lambda_k=lambda[i,]; 
+      #     # ind_gam_k=ind_gam[i,];
+      #     
+      #   }else{
+      #     
+      #     lambda_k=lambda; 
+      #     # ind_gam_k=ind_gam;
+      #     
+      #   }
+      #   
+      #   Y_clust=matrix(t(Y[temp_ind,]), ns1*nt, 1)
+      #   vec_lam_k=Para_re2all(lambda_k, J);
+      #   
+      #   # res_gam=postGamma_loop(Y_clust, X, vec_lam_k, ind_gam_k, a0, b0)
+      #   
+      #   # if(k>1){
+      #   #   ind_gam_new[i,]=unlist(res_gam)
+      #   # }else{
+      #   #   
+      #   #   ind_gam_new=unlist(res_gam)
+      #   #   
+      #   # }
+      #   
+      # }
       
-      ind_gam=ind_gam_new
+      # ind_gam=ind_gam_new
       
       ##Update log-likelihood value
-      log_like_res = evalLogLike_all_parallel2(Y, X, lambda, sigmasq_y, ind_gam, cluster, cl)
+      log_like_res = evalLogLike_all_parallel2(Y, tPHI, lambda, sigmasq_y, population, cluster, cl)
       log_like=log_like_res$llik_all;log_like_vec=log_like_res$log_like_vec;
     }
     
     ############################################################################## 
     # update sigma2
-    
-    ####Consider a parallel implementation      
-    sigmasq_y_new=postSigmasq_par(Y, X, lambda, ind_gam, a0, b0, cluster, cl)
-    sigmasq_y = sigmasq_y_new
-    
-    # update beta
-    beta_res=postBeta_par(Y, X, lambda, sigmasq_y, ind_gam, cluster, cl)
-    beta=t(matrix(beta_res, nt, k))
-    
-    ##Update log-likelihood value
-    log_like_res = evalLogLike_all_parallel2(Y, X, lambda, sigmasq_y, ind_gam, cluster, cl)
-    log_like=log_like_res$llik_all;log_like_vec=log_like_res$log_like_vec;
     
     ###store estimates
     if(iter %% 100 == 0) {
@@ -1266,9 +1220,9 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
     ## save result
     if(iter > BURNIN & (iter - BURNIN) %% THIN == 0) {
       
-      beta_out[[(iter-BURNIN)/THIN]] = beta
-      lambda_out[[(iter-BURNIN)/THIN]] = lambda
-      sigmasq_y_out[[(iter-BURNIN)/THIN]] = sigmasq_y
+      # beta_out[[(iter-BURNIN)/THIN]] = beta
+      # lambda_out[[(iter-BURNIN)/THIN]] = lambda
+      # sigmasq_y_out[[(iter-BURNIN)/THIN]] = sigmasq_y
       
       MST_out[[(iter-BURNIN)/THIN]] = mstgraph
       cluster_out[(iter-BURNIN)/THIN, ] = cluster
@@ -1283,6 +1237,19 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
     }
     
   }
+  
+  ####Consider a parallel implementation      
+  # sigmasq_y_new=postSigmasq_par(Y, X, lambda, ind_gam, a0, b0, cluster, cl)
+  sigmasq_y_new = rep(0.01, k)
+  sigmasq_y = sigmasq_y_new
+  
+  # update beta
+  beta_res=postBeta_par(Y, tPHI, lambda, sigmasq_y, cluster, cl)
+  beta=t(matrix(beta_res, J+1, k))
+  
+  ##Update log-likelihood value
+  log_like_res = evalLogLike_all_parallel2(Y, tPHI, lambda, sigmasq_y, population, cluster, cl)
+  log_like=log_like_res$llik_all;log_like_vec=log_like_res$log_like_vec;
   
   stopCluster(cl)
   
