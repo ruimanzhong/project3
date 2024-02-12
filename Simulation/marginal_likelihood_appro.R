@@ -14,7 +14,7 @@ package.check <- lapply( packages,
 # J is the number of basis function, J+1 includes intercept
 # k is the number of clusters
 # X is the design matrix without intercept
-
+load("~/Documents/BSTDM/project3/Simulation/data/state_data_sim2_eqlambda_eqvar.Rdata")
 k = 3
 J = 3
 X = matrix(c(t, t^2, t^3), nrow = nt)
