@@ -1212,7 +1212,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
     # update sigma2
     
     ###store estimates
-    if(iter %% 100 == 0) {
+    if(iter %% 10 == 0) {
       cat('Iteration', iter, 'k', k, 'birth cnt', birth_cnt, 'death cnt', death_cnt, 'change cnt', change_cnt, 'hyper cnt', hyper_cnt, '\n')
       cat('move', move, 'k', k, 'ncluster', length(unique(cluster)), '\n') 
     }
@@ -1220,7 +1220,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
     ## save result
     if(iter > BURNIN & (iter - BURNIN) %% THIN == 0) {
       
-      # beta_out[[(iter-BURNIN)/THIN]] = beta
+       beta_out[[(iter-BURNIN)/THIN]] = beta
       # lambda_out[[(iter-BURNIN)/THIN]] = lambda
       # sigmasq_y_out[[(iter-BURNIN)/THIN]] = sigmasq_y
       
