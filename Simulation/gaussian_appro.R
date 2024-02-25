@@ -2,13 +2,12 @@ library("splines")
 library(INLA)
 knots = seq(0,1, length.out  = J)
 n <- 128
-beta_0 <- -5
+beta_0 <- 1
 beta_1 <- 3
 t <- seq(0,1, length.out = n)
-population = 10000
-
-u1 <-  exp(rnorm(n, mean = beta_0, sd = 0.1) + rnorm(n, mean = beta_1, sd = 1)*t ) *population
+population = 1
 set.seed(12345)
+u1 <-  exp(rnorm(n, mean = beta_0, sd = 0.1) + rnorm(n, mean = beta_1, sd = 1)*t ) *population
 # u2 = exp(rnorm(n, mean = beta_0, sd = 0.1) + rnorm(n, mean = beta_1, sd = 1)*t) *population
 y1 <- rpois(n, u1)
 set.seed(123)
@@ -76,13 +75,14 @@ def.xprior <- function(theta){
 
 # distribution of x given y and theta
 def.xcond <- function(A, y, theta, population, n){
-  initial <- c(log(1+y[1:n])/population,0, 0)
+  initial <- c(log(1+y[1:n])/population,1, 3)
   for (i in 1:100) {
     initial.eta <- A%*%initial
     initial.eta <- as.numeric(initial.eta)
     D <- diag(exp(initial.eta)*population)
-    H <- def.xprior(theta)$Q + crossprod(A, D)%*%A
-    b <- y - population*exp(initial.eta) +population*initial.eta*exp(initial.eta) 
+    H <- def.xprior(theta)$Q*population + crossprod(A, D)%*%A
+    # divided by pop
+    b <- y/population - exp(initial.eta) +(log(population)+ initial.eta)*exp(initial.eta)
     b <- crossprod(b,A)
     updated <- solve(H, as.numeric(b))
     
@@ -105,14 +105,22 @@ A = do.call(rbind, replicate(ns, A.single, simplify = FALSE))
 theta <- rgamma(128,shape = 0.01, scale = 0.01)
 x.prior = def.xprior(theta)
 x.cond = def.xcond(A, y, theta, population, n)
-# conditional marginal likelihood -----------------------------------------f
+# check res
+x.cond$x
+range(x.cond$x[1:128] -res$summary.random$idx$mode)
+# conditional marginal likelihood -----------------------------------------
+
 mlik.cond <- function(A, y, x.cond, x.prior){
  x.mode <- x.cond$x
  eta.mode <- A %*% x.mode
- log.x.prior <-   - 0.5*crossprod(x.mode, x.prior$Q)%*%x.mode 
- log_likelihood = crossprod(y, eta.mode) + sum(exp(eta.mode))
+ # compute log prior of GRF x, x includes intercept, covariate coeff, and latent effect
+ # x ~ N(0,Q), loglikelihood at x.mode is - 0.5 * x^T %*% Q %*% x, constant is ignore
+ log.x.prior <- - 0.5*crossprod(x.mode, x.prior$Q)%*%x.mode
+ # compute log likelihood at eta.mode, sum((y_i*eta.mode_i) - sum(population_i*exp(eta_mode_i))
+ log_likelihood = crossprod(y, eta.mode) - sum(exp(eta.mode)*population)
  log_x.cond = - 0.5*crossprod(x.mode, x.cond$Q)%*%x.mode + crossprod(x.cond$b,x.mode) 
  mlik <- log.x.prior + log_likelihood - log_x.cond
  return(mlik)
 }                                            
 mlik <- mlik.cond(A, y, x.cond, x.prior)
+x.cond$b
