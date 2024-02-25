@@ -24,6 +24,7 @@ coords = cbind(raw_data[,1], raw_data[,2])
 colnames(coords) = c("lon", "lat")
 cluster_true = raw_data[,3]
 population = raw_data[,4]
+Y =  raw_data[,5:260]
 y = raw_data[,5:260]/population
 ns = dim(y)[1]
 nt = dim(y)[2] 

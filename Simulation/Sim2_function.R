@@ -110,12 +110,12 @@ evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, member
   beta.prec = diag(lambda_k)*(1/sigma2_yk)
   data = as.data.frame(cbind(vec_Yk = vec_Yk,COV = COV))
   
-  idx = rep(1:nt,ns)
-    formula= vec_Yk~  COV + f(idx, model = 'iid',
+  idx = rep(1,ns)
+    formula= vec_Yk~ 0+ COV + f(idx, model = 'iid',
                               hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
     m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
                         data = data, 
-                        control.fixed = list(prec = beta.prec, prec.intercept = 0.01)
+                        control.fixed = list(prec = beta.prec)
     )
     return(m.bs3[["mlik"]][[1]] + 0.5 * log(det(diag(lambda_k))))
   
@@ -224,7 +224,7 @@ postSigmasq_each_INLA<-function(k, Y, X, lambda, sigmasq_y,population, a0, b0, m
   data = as.data.frame(cbind(vec_Yk = vec_Yk,COV = COV))
   
   idx = rep(1,length(vec_Yk))
-  formula= vec_Yk~  COV + f(idx, model = 'iid',
+  formula= vec_Yk~ 0+ COV + f(idx, model = 'iid',
                             hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
   m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
                       data = data, 
@@ -636,7 +636,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
   
   
   ### initialize log likelihood vector
-  log_like_ini = evalLogLike_all_parallel2(Y, X = tPHI, lambda, sigmasq_y, population, cluster, cl, a0 = a0, b0 = b0)
+  log_like_ini = evalLogLike_all_parallel2(Y, X, lambda, sigmasq_y, population, cluster, cl, a0 = a0, b0 = b0)
   log_like = log_like_ini$llik_all;log_like_vec=log_like_ini$log_like_vec
 
   
@@ -696,11 +696,12 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       
       
       # compute log-prior ratio
-      log_A = log_A = log(1-c) + (a0/2)*log(b0/2) - log(gamma(a0/2)) -(a0/2+1)*log(sigmasq_yk) - b0/(2*sigmasq_yk) +
-        sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda_new[k+1,])-d0/(2*lambda_new[k+1,]))
+      log_A = log_A = log(1-c) 
+      # + (a0/2)*log(b0/2) - log(gamma(a0/2)) -(a0/2+1)*log(sigmasq_yk) - b0/(2*sigmasq_yk) +
+      #   sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda_new[k+1,])-d0/(2*lambda_new[k+1,]))
       ## calculate loglikelihood ratio by only comparing local likelihood of the two clusters that changed.
       
-      log_L_new=evalLogLike.ratio('split',log_like_vec, split_res, Y, tPHI, lambda_new, sigmasq_y_new, membership_new, a0, b0)
+      log_L_new=evalLogLike.ratio('split',log_like_vec, split_res, Y, X, lambda_new, sigmasq_y_new, membership_new, a0, b0)
       log_L=log_L_new$ratio 
       
       #acceptance probability

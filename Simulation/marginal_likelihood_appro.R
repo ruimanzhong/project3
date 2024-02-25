@@ -46,16 +46,16 @@ mlik <- function(ind){
   formula= vec_Yk~  0 + COV + f(idx, model = 'iid',
                             hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
   m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
-                      data = data, 
-                      control.fixed = list(prec = beta.prec, prec.intercept = 0.38)
+                      data = data,  control.compute = list(dic = TRUE, waic = TRUE),
+                      control.fixed = list(prec = beta.prec, prec.intercept = 0.01)
   )
   print(summary(m.bs3))
-  return(m.bs3$mlik[[1]] )
+  return(m.bs3)
 }
 ind_all = which(cluster_true == 1)
 # merge step
 
- ind_2 = ind_all[c(1:7,9:11)]
+ ind_2 = ind_all[c(1,2)]
 ind_1 = ind_all[8]
 M = mlik(ind_all)
 M1 = mlik(ind_1)
