@@ -110,7 +110,7 @@ evalLogLike_each_INLA <- function(k, Y, X, lambda, sigmasq_y, population, member
   beta.prec = diag(lambda_k)*(1/sigma2_yk)
   data = as.data.frame(cbind(vec_Yk = vec_Yk,COV = COV))
   
-  idx = rep(1,ns)
+  idx = rep(1:nt,nrow(Yk))
     formula= vec_Yk~ 0+ COV + f(idx, model = 'iid',
                               hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
     m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
@@ -150,28 +150,26 @@ postBeta_each<-function(k, Y, X, lambda, sigmasq_y,population,membership, a0 = N
     # ind_gam_k=ind_gam
     
   }
-  X = cbind(1, do.call(rbind, replicate(nrow(Yk), X, simplify = FALSE)))
+  COV = cbind(1, do.call(rbind, replicate(nrow(Yk), X, simplify = FALSE)))
   beta.prec = diag(lambda_k)*(1/sigma2_yk)
-  data = as.data.frame(cbind(vec_Yk = vec_Yk,X = X))
-  
-  idx = rep(1,length(vec_Yk))
+  data = as.data.frame(cbind(vec_Yk = vec_Yk,COV = COV))
+  idx = rep(1:nt,nrow(Yk))
   if (!is.null(a0) & !is.null(b0)){
-    formula= vec_Yk~  X + f(idx, model = 'iid',
-                            hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
+    formula= vec_Yk~ 0+ COV + f(idx, model = 'iid',
+                                hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
     m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
-                        data = data, 
+                        data = data, control.compute=list(config = TRUE),
                         control.fixed = list(prec = beta.prec)
     )
-    sigma_sq_new <- inla.hyperpar.sample(m.bs3)
   } else {
-    formula= vec_Yk~  X
+    formula= vec_Yk~ 0+ COV + f(idx, model = 'iid',
+                                hyper = list(prec = list(prior = "loggamma", param = c(a0,b0))))
     m.bs3 <- INLA::inla(formula, family = "poisson", E = rep(population[ind],each = nt),
                         data = data, control.compute=list(config = TRUE),
                         control.fixed = list(prec = beta.prec)
     )
   }
-  sample = INLA::inla.posterior.sample.eval(c("Intercept","bspl4.1","bspl4.2","bspl4.3","bspl4.4","bspl4.5"    
-                                              ,"bspl4.6","bspl4.7","bspl4.8"), INLA::inla.posterior.sample(1, m.bs3))
+  sample = INLA::inla.posterior.sample.eval(c( "COV1", "COV2","COV3","COV4" ), INLA::inla.posterior.sample(1, m.bs3))
   beta_new = matrix(sample, J+1, 1)
   
   return(as.numeric(beta_new))
@@ -179,7 +177,7 @@ postBeta_each<-function(k, Y, X, lambda, sigmasq_y,population,membership, a0 = N
 }
 
 #####For all clusters
-postBeta_par<-function(Y, X, lambda, sigmasq_y, membership, cl, a0 = NULL, b0 = NULL){
+postBeta_par<-function(k, Y, X, lambda, sigmasq_y,population,membership, a0 = NULL, b0 = NULL){
   
   
   p=max(membership) 
@@ -696,7 +694,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       
       
       # compute log-prior ratio
-      log_A = log_A = log(1-c) 
+     log_A = log(1-c) 
       # + (a0/2)*log(b0/2) - log(gamma(a0/2)) -(a0/2+1)*log(sigmasq_yk) - b0/(2*sigmasq_yk) +
       #   sum(c0/2*log(d0/2)-log(gamma(c0/2))-(c0/2+1)*log(lambda_new[k+1,])-d0/(2*lambda_new[k+1,]))
       ## calculate loglikelihood ratio by only comparing local likelihood of the two clusters that changed.
@@ -752,7 +750,7 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
       Y_clust=Y[ind_k,]
       # vec_lambda_k=Para_re2all(lambda[cid_comb,], J)
       
-      sigmasq_yk=postSigmasq_each_INLA(Y_clust, X, vec_lambda_k,  a0, b0)
+      sigmasq_yk=postSigmasq_each_INLA(k, Y, X, lambda, sigmasq_y,population, a0, b0, membership)
       sigmasq_y_new[cid_newid]=sigmasq_yk; 
       
       # compute log-prior ratio
@@ -938,7 +936,8 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
     
     ############################################################################## 
     # update sigma2
-    sigmasq_y_new=postSigmasq_par(Y, X, lambda, ind_gam, a0, b0, cluster, cl)
+    sigmasq_y_new=postSigmasq_par(k, Y, X, lambda, sigmasq_y,population, a0, b0, cluster, cl)
+    # sigmasq_y_new = rep(0.01, k)
     sigmasq_y = sigmasq_y_new
     
     ###store estimates
@@ -969,12 +968,12 @@ Fun_Wave_Clust <- function(Y, X, graph0, init_val, hyperpar, MCMC, BURNIN, THIN,
   }
   
   ####Consider a parallel implementation      
-  # sigmasq_y_new=postSigmasq_par(Y, X, lambda, ind_gam, a0, b0, cluster, cl)
-  sigmasq_y_new = rep(0.01, k)
-  sigmasq_y = sigmasq_y_new
+  # # sigmasq_y_new=postSigmasq_par(Y, X, lambda, ind_gam, a0, b0, cluster, cl)
+  # sigmasq_y_new = rep(0.01, k)
+  # sigmasq_y = sigmasq_y_new
   
   # update beta
-  beta_res=postBeta_par(Y, tPHI, lambda, sigmasq_y, cluster, cl)
+  beta_res=postBeta_par(k, Y, X, lambda, sigmasq_y,population,membership, a0, b0)
   beta=t(matrix(beta_res, J+1, k))
   
   ##Update log-likelihood value

@@ -2,10 +2,10 @@ library("splines")
 library(INLA)
 knots = seq(0,1, length.out  = J)
 n <- 128
-beta_0 <- 1
+beta_0 <- -1
 beta_1 <- 3
 t <- seq(0,1, length.out = n)
-population = 1
+population = 100
 set.seed(12345)
 u1 <-  exp(rnorm(n, mean = beta_0, sd = 0.1) + rnorm(n, mean = beta_1, sd = 1)*t ) *population
 # u2 = exp(rnorm(n, mean = beta_0, sd = 0.1) + rnorm(n, mean = beta_1, sd = 1)*t) *population
@@ -31,27 +31,27 @@ res = inla(formula = formula,
            control.inla = list(control.vb=list(enable = TRUE)),
            inla.mode = "experimental")
 summary(res)
-res1 = inla(formula = formula,
-           family = "poisson",E = population,
-           data = list(y=y, t =rep(t,2), idx = 1:256),
-           control.compute = list(config=T, return.marginals.predictor=T,mlik = T),
-           control.predictor = list(compute = T),
-           control.fixed=list(prec.intercept = 1, prec = 1),
-           control.inla = list(control.vb=list(enable = TRUE)),
-           inla.mode = "experimental")
-
-summary(res1)
-
-res2 = inla(formula = formula,
-            family = "poisson",E = population,
-            data = list(y=y2, t =t, idx = idx[1:128]),
-            control.compute = list(config=T, return.marginals.predictor=T,mlik = T),
-            control.predictor = list(compute = T),
-            control.fixed=list(prec.intercept = 1, prec = 1),
-            control.inla = list(control.vb=list(enable = TRUE)))
-
-summary(res2)
- res$mlik[[1]] -(res1$mlik[[1]] + res1$mlik[[2]])
+# res1 = inla(formula = formula,
+#            family = "poisson",E = population,
+#            data = list(y=y, t =rep(t,2), idx = 1:256),
+#            control.compute = list(config=T, return.marginals.predictor=T,mlik = T),
+#            control.predictor = list(compute = T),
+#            control.fixed=list(prec.intercept = 1, prec = 1),
+#            control.inla = list(control.vb=list(enable = TRUE)),
+#            inla.mode = "experimental")
+# 
+# summary(res1)
+# 
+# res2 = inla(formula = formula,
+#             family = "poisson",E = population,
+#             data = list(y=y2, t =t, idx = idx[1:128]),
+#             control.compute = list(config=T, return.marginals.predictor=T,mlik = T),
+#             control.predictor = list(compute = T),
+#             control.fixed=list(prec.intercept = 1, prec = 1),
+#             control.inla = list(control.vb=list(enable = TRUE)))
+# 
+# summary(res2)
+#  res$mlik[[1]] -(res1$mlik[[1]] + res1$mlik[[2]])
 # # log of the distribution of the log precision
 
 lprior.theta <- function(theta){
@@ -62,7 +62,7 @@ lprior.theta <- function(theta){
 # GMRF
 Q <- function(theta){
   #Q <- matrix(0, nrow = 2*n, ncol = 2*n)
-  Q <- diag(c(exp(theta),rep(1,p)))
+  Q <- diag(c(rep(exp(theta), n), rep(1,p)))
   Q <- as(Q, "sparseMatrix")
   return(Q)
 }
@@ -72,20 +72,19 @@ Q <- function(theta){
 def.xprior <- function(theta){
   return(list(Q = Q(theta), b = rep(0, n + p)))
 }
-
 # distribution of x given y and theta
 def.xcond <- function(A, y, theta, population, n){
-  initial <- c(log(1+y[1:n])/population,1, 3)
+  initial <- c(log(1+y[1:n])/population[1:n],0, 0)
   for (i in 1:100) {
-    initial.eta <- A%*%initial
+    initial.eta <- A %*%initial
     initial.eta <- as.numeric(initial.eta)
-    D <- diag(exp(initial.eta)*population)
-    H <- def.xprior(theta)$Q*population + crossprod(A, D)%*%A
-    # divided by pop
-    b <- y/population - exp(initial.eta) +(log(population)+ initial.eta)*exp(initial.eta)
-    b <- crossprod(b,A)
-    updated <- solve(H, as.numeric(b))
-    
+    D <- diag(exp(initial.eta))*population
+    H <- def.xprior(theta)$Q + crossprod(A, D)%*%A
+ 
+    b = y - population*initial.eta +  initial.eta*exp(initial.eta)*population
+      b = crossprod(A,b)
+ updated <- solve(H, as.numeric(b))
+ print(updated[c(129,130)])
     
     #if (T) print(mean(abs(initial - updated)))
     if(mean(abs(initial - updated)) < 1e-8)
@@ -100,26 +99,29 @@ def.xcond <- function(A, y, theta, population, n){
 }
 # A
 ns = 2
+population = rep(population,n*ns) 
 A.single <-  cbind(diag(1, n), t, rep(1, n))
 A = do.call(rbind, replicate(ns, A.single, simplify = FALSE))
-theta <- rgamma(128,shape = 0.01, scale = 0.01)
+theta <- rgamma(1,shape = 0.01, scale = 0.01)
 x.prior = def.xprior(theta)
 x.cond = def.xcond(A, y, theta, population, n)
 # check res
+summary(res)
 x.cond$x
 range(x.cond$x[1:128] -res$summary.random$idx$mode)
 # conditional marginal likelihood -----------------------------------------
 
 mlik.cond <- function(A, y, x.cond, x.prior){
  x.mode <- x.cond$x
- eta.mode <- A %*% x.mode
+ eta.mode <- A %*% x.mode +log(population)
  # compute log prior of GRF x, x includes intercept, covariate coeff, and latent effect
  # x ~ N(0,Q), loglikelihood at x.mode is - 0.5 * x^T %*% Q %*% x, constant is ignore
- log.x.prior <- - 0.5*crossprod(x.mode, x.prior$Q)%*%x.mode
- # compute log likelihood at eta.mode, sum((y_i*eta.mode_i) - sum(population_i*exp(eta_mode_i))
- log_likelihood = crossprod(y, eta.mode) - sum(exp(eta.mode)*population)
- log_x.cond = - 0.5*crossprod(x.mode, x.cond$Q)%*%x.mode + crossprod(x.cond$b,x.mode) 
+ log.x.prior <- - 0.5*crossprod(x.mode, x.prior$Q)%*%x.mode + log(det(x.prior$Q)^0.5)
+ # compute log likelihood at eta.mode, sum((y_i*eta.mode_i) - sum(exp(eta_mode_i))
+ log_likelihood = crossprod(y, eta.mode) - sum(exp(eta.mode))
+ log_x.cond = - 0.5*crossprod(x.mode, x.cond$Q)%*%x.mode + x.cond$b%*%x.mode
  mlik <- log.x.prior + log_likelihood - log_x.cond
+ mlik
  return(mlik)
 }                                            
 mlik <- mlik.cond(A, y, x.cond, x.prior)

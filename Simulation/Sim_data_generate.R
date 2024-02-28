@@ -18,7 +18,7 @@ package.check <- lapply( packages,
                          } )
 library(Matrix.utils)
 library(remotes)
-remotes::install_github("wmgeolab/rgeoboundaries")
+# remotes::install_github("wmgeolab/rgeoboundaries")
 library(rgeoboundaries)
 
 # State_cluster -----------------------------------------------------------
@@ -76,7 +76,7 @@ t = seq(0,1, length.out = nt)
 
 # J = 8
 # splinebasis = NULL
-sigma2_y <- rep(0.01, k_true)
+sigma2_y <- rep(0.001, k_true)
 # # splinebasis = create.polygonal.basis(seq(0,1,0.1))
 #  splinebasis = create.bspline.basis(c(0,1), J)
 # tPHI= eval.basis(t, splinebasis) 
@@ -89,7 +89,7 @@ tPHI = matrix(c(rep(1,nt), t, t^2, t^3), nrow = nt)
 
 # # scal_para <- seq(0.5,2, length.out = k_true)
 # shape = seq(1,3, length.out = k_true)
-lambda <- matrix(0.1, k_true, J+1)
+lambda <- matrix(1, k_true, J+1)
 eta <- matrix(1, k_true, J+1)
 
 
